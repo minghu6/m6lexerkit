@@ -1,0 +1,20 @@
+// This is Main Entry
+fn main() -> i32 {
+    !(echo -n Count :)
+    !(tput sc)
+
+    let count = 0
+
+    while true {
+        if count < 40 {
+            count++
+            !(sleep 1)
+            !(tput rc)
+            !(tput ed)
+            !(echo -n $count)
+        }
+        else {
+            return 0
+        }
+    }
+}
