@@ -7,41 +7,70 @@ use m6tokenizer::{
     SrcFileInfo,
     dqstr_m,
     aqstr_m,
+    lit_regex_m,
     tokenize, TokenMatchResult,
 };
 
 
 make_token_matcher_rules! {
     id        => "[[:alpha:]_][[:alnum:]_]*",
+
+    // Lit
+    lit_int => r"[+|-]?(([0-9]+)|(0x[0-9a-f]+))",
+    lit_float => r"[+|-]?([0-9]+\.[0-9])",
+    dqstr,
+    aqstr,
+    lit_regex,
+
+    // Comment
     exec_id   => r"\$[[:alpha:]_][[:alnum:]_]*",
     slash_line_comment  => r"//.*",
 
+    // space
     sp      => "[[:blank:]]+",
     newline => r#"\n\r?"#,
 
-    dqstr,
-    aqstr,
-
-    // Operation
-    colon => ":",
+    // Bracket
     lparen => r"\(",
     rparen => r"\)",
     lbracket => r"\[",
     rbracket => r"\]",
     lbrace => r"\{",
     rbrace => r"\}",
+
+    // Delimiter
+    colon => ":",
+    question => r"\?",
     double_arrow  => "=>",
+    semi   => ";",
+    comma  => ",",
+
+    // Assign
+    assign => "=",
+
+    // Unary Operation
+    inc => r"\+\+",
+    dec => r"--",
+    not => "!",
+
+    // Binary Operation
     sub    => "-",
-    add2   => r"\+\+",
-    add    => r"\+",
+    add    => r"\+[^\+]",
     mul    => r"\*",
     div    => "/",
-    semi   => ";",
     dot    => r"\.",
-    comma  => ",",
+    ge     => ">=",
+    le     => "<=",
     lt     => "<",
-    eq     => "=",
-    percent=> "%"
+    gt     => ">",
+    realeq => "===",
+    nrealeq => "!==",
+    neq    => "!=",
+    eq     => "==",
+    percent=> "%",
+    and    => "&&",
+    or     => r"\|\|"
+
 }
 
 
@@ -64,6 +93,8 @@ fn display_pure_tok(tokens: &[Token]) {
 
 
 fn main() {
+    // let res = lit_regex_m(r#"/[|\\{}()[\]^$+*?.]/g"#, 0);
+    // println!("res: {:?}", res);
 
     for i in 0..1 {
         let path = PathBuf::from(format!("./examples/exp{}.js", i));
@@ -73,8 +104,8 @@ fn main() {
 
         match tokenize(&srcfile, &MATCHERS[..]) {
             Ok(tokens) => {
-                let trimed_tokens = trim_tokens(&tokens[..]);
-                display_pure_tok(&trimed_tokens[..]);
+                let tokens = trim_tokens(&tokens[..]);
+                display_pure_tok(&tokens[..]);
             },
             Err(err) => println!("{}", err),
         }

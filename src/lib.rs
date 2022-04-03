@@ -1,4 +1,4 @@
-use std::{cell::RefCell, error::Error, fmt, fs, path::PathBuf};
+use std::{cell::RefCell, error::Error, fmt, fs, path::PathBuf, collections::HashSet};
 
 pub use lazy_static;
 // pub use crate::lexer::{
@@ -155,6 +155,10 @@ impl Span {
     pub fn len(&self) -> usize {
         self.end - self.from
     }
+
+    pub fn chars_count(&self, source: &str) -> usize {
+        source[self.from..self.end].chars().count()
+    }
 }
 
 
@@ -195,6 +199,11 @@ impl Token {
     #[inline]
     pub fn span_len(&self) -> usize {
         self.span.len()
+    }
+
+    #[inline]
+    pub fn span_chars_count(&self, source: &str) -> usize {
+        self.span.chars_count(source)
     }
 
     pub fn rename(self, name: &str) -> Self {
@@ -304,7 +313,9 @@ pub fn tokenize(
             if let Some(tokres) = fn_matcher(&source[bytes_pos..], bytes_pos) {
                 match tokres {
                     Ok(tok) => {
-                        chars_pos += tok.chars_len();
+                        println!("{}", tok);
+
+                        chars_pos += tok.span_chars_count(source);
                         bytes_pos += tok.span_len();
 
                         tokens.push(tok);
@@ -325,6 +336,7 @@ pub fn tokenize(
         }
 
         if !tok_matched {
+            // println!("{}", &source[bytes_pos..]);
             let loc = srcfile.offset2srcloc(chars_pos);
 
             return Err(TokenizeError {
@@ -393,22 +405,12 @@ pub fn aux_strlike_m(
                     st = 1;
                 } else if c == delimiter {
                     st = 2;
-                    val.push(c);
-                } else {
-                    val.push(c);
                 }
+                val.push(c);
             }
             1 => {
                 st = 0;
-                val.push(if c == delimiter {
-                    delimiter
-                } else if c == escape_char {
-                    escape_char
-                } else {
-                    return Some(Err(
-                        TokenizeErrorReason::UnrecognizedEscaped(c),
-                    ));
-                });
+                val.push(c);
             }
             2 => {
                 if let Some(mat) = postfix_iter.next() {
@@ -425,6 +427,7 @@ pub fn aux_strlike_m(
             _ => unreachable!(),
         }
     }
+    val.pop().unwrap();  // pop delimiter
 
     let span_len = prefix.len() + val.len() + postfix.len();
     let span = Span { from, end: from + span_len };
@@ -471,6 +474,50 @@ pub fn sqstr_m(
     aux_strlike_m(source, from, "'", "'", '\\')
     .and_then(|res|
         Some(res.and_then(|tok| Ok(tok.rename("sqstr"))))
+    )
+}
+
+#[inline]
+pub fn lit_regex_m(
+    source: &str,
+    from: usize
+) -> Option<TokenMatchResult> {
+    aux_strlike_m(source, from, "/", "/", '\\')
+    .and_then(|res|
+        match res {
+            Ok(mut tok) => {
+                lazy_static::lazy_static! {
+                    // 'z'+1 = '}', 'Z' + 1 = '['
+                    pub static ref ALPHABET__: HashSet<char> = ('a'..'}').chain('A'..'[').collect();
+                }
+
+                let mut tokv = tok.value_str();
+                if tokv.is_empty() {  // It' maybe slash comment
+                    return None;
+                }
+
+                tokv.insert(0, '/');
+                tokv.push('/');
+
+                if let Some(nxtc) = source[tok.span_len()..].chars().next() {
+                    if ALPHABET__.contains(&nxtc) {
+                        tokv.push(nxtc);
+
+                        let span = Span {
+                            from,
+                            end: from + tok.span_len() + nxtc.to_string().len(),
+                        };
+
+                        tok.span = span;
+                    }
+                }
+
+                tok.value = str2sym(&tokv);
+
+                Some(Ok(tok.rename("lit_regex")))
+            },
+            _ => unreachable!(),
+        }
     )
 }
 
