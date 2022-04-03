@@ -9,6 +9,7 @@ pub use lazy_static;
 // };
 pub use proc_macros::make_token_matcher_rules;
 use regex::Regex;
+use fancy_regex::Regex as RegexEh;
 use string_interner::{symbol::DefaultSymbol, StringInterner};
 
 thread_local! {
@@ -143,15 +144,29 @@ impl Ord for SrcLoc {
 }
 
 
+#[derive(Clone, Copy)]
+pub struct Span {
+    pub from: usize,  // bytes offset used for index from origin file
+    pub end: usize
+}
+
+impl Span {
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.end - self.from
+    }
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Token
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Token {
     pub name: Symbol,
     pub value: Symbol,
-    pub loc: SrcLoc,
+    pub span: Span,
 }
 
 impl Token {
@@ -178,10 +193,16 @@ impl Token {
 
     /// value's bytes len
     #[inline]
-    pub fn bytes_len(&self) -> usize {
-        INTERNER.with(|interner| {
-            interner.borrow().resolve(self.value).unwrap().len()
-        })
+    pub fn span_len(&self) -> usize {
+        self.span.len()
+    }
+
+    pub fn rename(self, name: &str) -> Self {
+        Self {
+            name: str2sym(name),
+            value: self.value,
+            span: self.span,
+        }
     }
 }
 
@@ -189,8 +210,6 @@ impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "name: <{}>", self.name_str(),)?;
         writeln!(f, "value: {}", self.value_str(),)?;
-
-        writeln!(f, "loc: {}", self.loc)?;
         writeln!(f, "len: {}", self.chars_len())
     }
 }
@@ -218,20 +237,23 @@ impl TokenMatcher {
         }
     }
 
-    pub fn fetch_tok(&self, text: &str, loc: SrcLoc) -> Option<TokenMatchResult> {
+    pub fn fetch_tok(&self, text: &str, start: usize) -> Option<TokenMatchResult> {
         self.pat
-            .captures_read(&mut self.pat.capture_locations(), text)
-            .and_then(|mat| {
+            .captures(text)
+            .and_then(|cap| {
+                let bytes_len = cap.get(0).unwrap().as_str().len();
+                let mat = cap.get(1).unwrap().as_str();
+
                 Some(Ok(Token {
                     name: self.tok_name,
-                    value: str2sym(mat.as_str()),
-                    loc,
+                    value: str2sym(mat),
+                    span: Span { from: start, end: start + bytes_len },
                 }))
             })
     }
 }
 
-pub type FnMatcher = fn(&str, SrcLoc) -> Option<TokenMatchResult>;
+pub type FnMatcher = fn(&str, usize) -> Option<TokenMatchResult>;
 
 
 
@@ -277,20 +299,21 @@ pub fn tokenize(
 
     while bytes_pos < source.len() {
         let mut tok_matched = false;
-        let loc = srcfile.offset2srcloc(chars_pos);
 
         for fn_matcher in fn_matchers.iter() {
-            if let Some(tokres) = fn_matcher(&source[bytes_pos..], loc) {
+            if let Some(tokres) = fn_matcher(&source[bytes_pos..], bytes_pos) {
                 match tokres {
                     Ok(tok) => {
                         chars_pos += tok.chars_len();
-                        bytes_pos += tok.bytes_len();
+                        bytes_pos += tok.span_len();
 
                         tokens.push(tok);
                         tok_matched = true;
                         break;
                     },
                     Err(reason) => {
+                        let loc = srcfile.offset2srcloc(chars_pos);
+
                         return Err(TokenizeError {
                             reason,
                             loc,
@@ -302,6 +325,8 @@ pub fn tokenize(
         }
 
         if !tok_matched {
+            let loc = srcfile.offset2srcloc(chars_pos);
+
             return Err(TokenizeError {
                 reason: TokenizeErrorReason::UnrecognizedToken,
                 loc,
@@ -339,10 +364,11 @@ pub fn str2sym(s: &str) -> Symbol {
 ///
 pub fn aux_strlike_m(
     source: &str,
+    from: usize,
     prefix: &str,
     postfix: &str,
     escape_char: char,
-) -> Option<Result<Symbol, TokenizeErrorReason>> {
+) -> Option<Result<Token, TokenizeErrorReason>> {
     debug_assert!(!prefix.is_empty());
     debug_assert!(!postfix.is_empty());
 
@@ -386,13 +412,11 @@ pub fn aux_strlike_m(
             }
             2 => {
                 if let Some(mat) = postfix_iter.next() {
-                    val.push(if c == mat {
-                        mat
-                    } else {
+                    if c != mat {
                         return Some(Err(
                             TokenizeErrorReason::UnexpectedPostfix,
-                        ));
-                    });
+                        ))
+                    }
                 }
                 else {
                     break;
@@ -402,11 +426,86 @@ pub fn aux_strlike_m(
         }
     }
 
-    Some(Ok(
-        str2sym(&(prefix.to_owned() + &val))
-    ))
+    let span_len = prefix.len() + val.len() + postfix.len();
+    let span = Span { from, end: from + span_len };
+    let value = str2sym(&val);
+    let name = str2sym("__aux_tmp");
+
+    Some(Ok(Token {
+        name,
+        value,
+        span,
+    }))
 }
 
+/// Double quote string
+#[inline]
+pub fn dqstr_m(
+    source: &str,
+    from: usize
+) -> Option<TokenMatchResult> {
+    aux_strlike_m(source, from, "\"", "\"", '\\')
+    .and_then(|res|
+        Some(res.and_then(|tok| Ok(tok.rename("dqstr"))))
+    )
+}
+
+/// Double quote string
+#[inline]
+pub fn aqstr_m(
+    source: &str,
+    from: usize
+) -> Option<TokenMatchResult> {
+    aux_strlike_m(source, from, "`", "`", '\\')
+    .and_then(|res|
+        Some(res.and_then(|tok| Ok(tok.rename("aqstr"))))
+    )
+}
+
+/// Single quote string
+#[inline]
+pub fn sqstr_m(
+    source: &str,
+    from: usize
+) -> Option<TokenMatchResult> {
+    aux_strlike_m(source, from, "'", "'", '\\')
+    .and_then(|res|
+        Some(res.and_then(|tok| Ok(tok.rename("sqstr"))))
+    )
+}
+
+
+///
+/// handle this heredoc:
+pub fn heredoc_m(
+    source: &str,
+    from: usize,
+) -> Option<Result<Token, TokenizeErrorReason>> {
+
+    lazy_static::lazy_static! {
+        pub static ref HEREDOC_2_REG_EH: RegexEh = RegexEh::new(
+            r#"^(<<<|<<-|<<|<-)[[:blank:]]*(.+)([[:blank:]]+.*\n|\n)([\s|\S]*?)\n\2"#
+        ).unwrap();
+    }
+
+    let cap_opt = HEREDOC_2_REG_EH.captures(source).unwrap();
+
+    if let Some(cap) = cap_opt {
+        let bytes_len = cap.get(0).unwrap().as_str().len();
+        let value = str2sym(cap.get(4).unwrap().as_str());
+        let span = Span { from, end: from + bytes_len };
+        let name = str2sym("__aux_tmp");
+
+        Some(Ok(Token {
+            name,
+            value,
+            span,
+        }))
+    }
+    else {
+        None
+    }
+}
 
 
 

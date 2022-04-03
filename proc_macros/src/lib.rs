@@ -138,13 +138,13 @@ pub fn make_token_matcher_rules(input: TokenStream) -> TokenStream {
                 LitStr::new(&format!("^({})", patstr.value()), Span::call_site());
 
             token_stream.extend(quote! {
-                pub fn #matcher_fn_name(s: &str, loc: SrcLoc) -> Option<TokenMatchResult> {
+                pub fn #matcher_fn_name(s: &str, from: usize) -> Option<TokenMatchResult> {
                     m6tokenizer::lazy_static::lazy_static! {
                         static ref #matcher_reg_name: m6tokenizer::TokenMatcher
                             = m6tokenizer::TokenMatcher::new(#adjust_patstr, stringify!(#name));
                     }
 
-                    #matcher_reg_name.fetch_tok(s, loc)
+                    #matcher_reg_name.fetch_tok(s, from)
                 }
             });
         }

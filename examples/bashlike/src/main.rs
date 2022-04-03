@@ -5,7 +5,6 @@ use m6tokenizer::{
     make_token_matcher_rules,
     SrcFileInfo,
     aux_strlike_m,
-    str2sym,
     tokenize, TokenMatchResult,
 };
 
@@ -15,6 +14,7 @@ make_token_matcher_rules! {
 
     id     => "[[:alpha:]_][[:alnum:]_]*",
     lit_int => r"[+|-]?(([0-9]+)|(0x[0-9a-f]+))",
+    lit_float => r"[+|-]?([0-9]+\.[0-9])",
 
     cmd,
     slash_block_comment => r"/\*.*",
@@ -47,14 +47,10 @@ make_token_matcher_rules! {
 }
 
 
-fn cmd_m(source: &str, loc: SrcLoc) -> Option<TokenMatchResult> {
-    aux_strlike_m(source, "!(", ")", '\\')
+fn cmd_m(source: &str, from: usize) -> Option<TokenMatchResult> {
+    aux_strlike_m(source, from, "!(", ")", '\\')
     .and_then(|res|
-        Some(res.and_then(|sym| Ok(Token {
-            name: str2sym("cmd"),
-            value: sym,
-            loc,
-        })))
+        Some(res.and_then(|tok| Ok(tok.rename("cmd"))))
     )
 }
 
