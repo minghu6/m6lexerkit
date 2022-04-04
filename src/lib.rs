@@ -1,15 +1,17 @@
-use std::{cell::RefCell, error::Error, fmt, fs, path::PathBuf, collections::HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt, fs,
+    path::PathBuf,
+};
 
-pub use lazy_static;
-// pub use crate::lexer::{
-//     Tokenizer,
-//     RegexCharMatcher,
-//     LexDFAMapType,
-//     ST_ENTRY
-// };
-pub use proc_macros::make_token_matcher_rules;
-use regex::Regex;
 use fancy_regex::Regex as RegexEh;
+pub use lazy_static;
+pub use concat_idents::concat_idents as concat_idents2;
+
+pub use proc_macros::{make_char_matcher_rules, make_token_matcher_rules};
+use regex::Regex;
 use string_interner::{symbol::DefaultSymbol, StringInterner};
 
 thread_local! {
@@ -146,8 +148,8 @@ impl Ord for SrcLoc {
 
 #[derive(Clone, Copy)]
 pub struct Span {
-    pub from: usize,  // bytes offset used for index from origin file
-    pub end: usize
+    pub from: usize, // bytes offset used for index from origin file
+    pub end: usize,
 }
 
 impl Span {
@@ -246,19 +248,24 @@ impl TokenMatcher {
         }
     }
 
-    pub fn fetch_tok(&self, text: &str, start: usize) -> Option<TokenMatchResult> {
-        self.pat
-            .captures(text)
-            .and_then(|cap| {
-                let bytes_len = cap.get(0).unwrap().as_str().len();
-                let mat = cap.get(1).unwrap().as_str();
+    pub fn fetch_tok(
+        &self,
+        text: &str,
+        start: usize,
+    ) -> Option<TokenMatchResult> {
+        self.pat.captures(text).and_then(|cap| {
+            let bytes_len = cap.get(0).unwrap().as_str().len();
+            let mat = cap.get(1).unwrap().as_str();
 
-                Some(Ok(Token {
-                    name: self.tok_name,
-                    value: str2sym(mat),
-                    span: Span { from: start, end: start + bytes_len },
-                }))
-            })
+            Some(Ok(Token {
+                name: self.tok_name,
+                value: str2sym(mat),
+                span: Span {
+                    from: start,
+                    end: start + bytes_len,
+                },
+            }))
+        })
     }
 }
 
@@ -270,7 +277,7 @@ pub type FnMatcher = fn(&str, usize) -> Option<TokenMatchResult>;
 pub enum TokenizeErrorReason {
     UnrecognizedToken,
     UnrecognizedEscaped(char),
-    UnexpectedPostfix
+    UnexpectedPostfix,
 }
 
 
@@ -321,7 +328,7 @@ pub fn tokenize(
                         tokens.push(tok);
                         tok_matched = true;
                         break;
-                    },
+                    }
                     Err(reason) => {
                         let loc = srcfile.offset2srcloc(chars_pos);
 
@@ -330,7 +337,7 @@ pub fn tokenize(
                             loc,
                             path: srcfile.path.clone(),
                         });
-                    },
+                    }
                 }
             }
         }
@@ -356,15 +363,12 @@ pub fn tokenize(
 //// Auxiliary
 
 pub fn sym2str(sym: Symbol) -> String {
-    INTERNER.with(|interner| {
-        interner.borrow().resolve(sym).unwrap().to_owned()
-    })
+    INTERNER
+        .with(|interner| interner.borrow().resolve(sym).unwrap().to_owned())
 }
 
 pub fn str2sym(s: &str) -> Symbol {
-    INTERNER.with(|interner| {
-        interner.borrow_mut().get_or_intern(s)
-    })
+    INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s))
 }
 
 
@@ -417,71 +421,51 @@ pub fn aux_strlike_m(
                     if c != mat {
                         return Some(Err(
                             TokenizeErrorReason::UnexpectedPostfix,
-                        ))
+                        ));
                     }
-                }
-                else {
+                } else {
                     break;
                 }
             }
             _ => unreachable!(),
         }
     }
-    val.pop().unwrap();  // pop delimiter
+    val.pop().unwrap(); // pop delimiter
 
     let span_len = prefix.len() + val.len() + postfix.len();
-    let span = Span { from, end: from + span_len };
+    let span = Span {
+        from,
+        end: from + span_len,
+    };
     let value = str2sym(&val);
     let name = str2sym("__aux_tmp");
 
-    Some(Ok(Token {
-        name,
-        value,
-        span,
-    }))
+    Some(Ok(Token { name, value, span }))
 }
 
 /// Double quote string
 #[inline]
-pub fn dqstr_m(
-    source: &str,
-    from: usize
-) -> Option<TokenMatchResult> {
+pub fn dqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
     aux_strlike_m(source, from, "\"", "\"", '\\')
-    .and_then(|res|
-        Some(res.and_then(|tok| Ok(tok.rename("dqstr"))))
-    )
+        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("dqstr")))))
 }
 
 /// Double quote string
 #[inline]
-pub fn aqstr_m(
-    source: &str,
-    from: usize
-) -> Option<TokenMatchResult> {
+pub fn aqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
     aux_strlike_m(source, from, "`", "`", '\\')
-    .and_then(|res|
-        Some(res.and_then(|tok| Ok(tok.rename("aqstr"))))
-    )
+        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("aqstr")))))
 }
 
 /// Single quote string
 #[inline]
-pub fn sqstr_m(
-    source: &str,
-    from: usize
-) -> Option<TokenMatchResult> {
+pub fn sqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
     aux_strlike_m(source, from, "'", "'", '\\')
-    .and_then(|res|
-        Some(res.and_then(|tok| Ok(tok.rename("sqstr"))))
-    )
+        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("sqstr")))))
 }
 
 #[inline]
-pub fn lit_regex_m(
-    source: &str,
-    from: usize
-) -> Option<TokenMatchResult> {
+pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
     aux_strlike_m(source, from, "/", "/", '\\')
     .and_then(|res|
         match res {
@@ -528,7 +512,6 @@ pub fn heredoc_m(
     source: &str,
     from: usize,
 ) -> Option<Result<Token, TokenizeErrorReason>> {
-
     lazy_static::lazy_static! {
         pub static ref HEREDOC_2_REG_EH: RegexEh = RegexEh::new(
             r#"^(<<<|<<-|<<|<-)[[:blank:]]*(.+)([[:blank:]]+.*\n|\n)([\s|\S]*?)\n\2"#
@@ -540,19 +523,178 @@ pub fn heredoc_m(
     if let Some(cap) = cap_opt {
         let bytes_len = cap.get(0).unwrap().as_str().len();
         let value = str2sym(cap.get(4).unwrap().as_str());
-        let span = Span { from, end: from + bytes_len };
+        let span = Span {
+            from,
+            end: from + bytes_len,
+        };
         let name = str2sym("__aux_tmp");
 
-        Some(Ok(Token {
-            name,
-            value,
-            span,
-        }))
-    }
-    else {
+        Some(Ok(Token { name, value, span }))
+    } else {
         None
     }
 }
+
+
+////////////////////////////////////////////////////////////////////////////////
+//// Tokenizer2
+
+////////////////////////////////////////////////////////////////////////////////
+//// Char Matcher (used for string splitter)
+
+pub trait CharMatcher {
+    fn is_match(&self, c: char) -> bool;
+}
+
+/// Simple Char Matcher
+pub struct SimpleCharMatcher {
+    target: char,
+}
+
+impl SimpleCharMatcher {
+    pub fn new(s: &str) -> Self {
+        Self {
+            target: s.chars().nth(0).unwrap(),
+        }
+    }
+}
+
+impl CharMatcher for SimpleCharMatcher {
+    #[inline]
+    fn is_match(&self, c: char) -> bool {
+        self.target == c
+    }
+}
+
+pub struct RegexCharMatcher {
+    pat: Regex,
+}
+
+impl RegexCharMatcher {
+    pub fn new(patstr: &str) -> Self {
+        Self {
+            pat: Regex::new(patstr).unwrap(),
+        }
+    }
+}
+
+impl CharMatcher for RegexCharMatcher {
+    #[inline]
+    fn is_match(&self, c: char) -> bool {
+        self.pat.is_match(&c.to_string())
+    }
+}
+
+pub type FnCharMatcher = fn(char) -> bool;
+pub type LexDFAMap = HashMap<Symbol, Vec<(FnCharMatcher, (Symbol, bool))>>;
+
+#[allow(unused)]
+pub const ENTRY_ST: &'static str = "Entry";
+
+pub struct LexDFA {
+    map: LexDFAMap,
+    st: Symbol,
+}
+
+impl LexDFA {
+    pub fn new(map: LexDFAMap) -> Self {
+        Self {
+            map,
+            st: str2sym(ENTRY_ST),
+        }
+    }
+
+    // Token END?
+    pub fn forward(&mut self, ch: char) -> bool {
+        let items = self.map.get(&self.st).unwrap();
+
+        for (matcher, (sym, res)) in items.into_iter() {
+            if matcher(ch) {
+                self.st = *sym;
+                return *res;
+            }
+        }
+
+        unreachable!("uncoverd char: {}", ch);
+    }
+}
+
+#[macro_export]
+macro_rules! declare_st {
+    ($name:ident) => {
+        use $crate::lazy_static;
+        use $crate::concat_idents2;
+
+        concat_idents2!(state_name = $name, _ST {
+            const state_name: &'static str = stringify!($name);
+        });
+    };
+
+    ( $($name:ident),* ) => {
+        $(
+            declare_st!{$name};
+        )+
+    };
+}
+
+
+#[macro_export]
+macro_rules! lexdfamap {
+    ( $($cur_st:expr =>
+        {
+            $( $matcher:ident | $nxt_st:expr, $flag:literal )*
+        }
+      ),*
+    ) => {
+        {
+            use std::collections::HashMap;
+            use $crate::FnCharMatcher;
+            use $crate::concat_idents2;
+
+            let mut _map = HashMap::new();
+
+            $(
+                use $crate::str2sym;
+
+                let mut trans_vec = Vec::new();
+
+                $(
+                    let nxt_st = str2sym($nxt_st);
+
+                    trans_vec.push((
+                        concat_idents2!(matcher_name = $matcher, _m {
+                            matcher_name as FnCharMatcher
+                        }),
+                        // concat_idents!($matcher, _m) as FnCharMatcher,
+                        (nxt_st, $flag)
+                    ));
+                )*
+
+                let cur_st = str2sym($cur_st);
+
+                _map.insert(cur_st, trans_vec);
+            )*
+
+            _map
+        }
+    }
+}
+
+pub fn tokenize2(
+    srcfile: &SrcFileInfo,
+    dfamap: &LexDFAMap,
+) -> TokenizeResult {
+    todo!()
+}
+
+
+pub fn tokenize2_split(src: &SrcFileInfo, dfamap: &LexDFAMap) -> Vec<Symbol> {
+    let mut spaned = vec![];
+
+
+    spaned
+}
+
 
 
 

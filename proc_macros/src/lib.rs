@@ -8,11 +8,11 @@ use syn::{parse_macro_input, Ident, LitStr, Token};
 
 
 ////////////////////////////////////////////////////////////////////////////////
-//// MakeCharMatcher
+//// MakeCharMatcherRules
 
 struct MakeCharMatcherRules {
-    // ident, patstr
-    rules: Vec<(Ident, LitStr)>,
+    // ident, patstr, matcher_t
+    rules: Vec<(Ident, LitStr, Ident)>,
 }
 
 impl Parse for MakeCharMatcherRules {
@@ -21,19 +21,16 @@ impl Parse for MakeCharMatcherRules {
 
         while !input.is_empty() {
             let name = input.parse()?;
-            input.parse::<Token![=>]>()?;
-            let patstr = input.parse::<LitStr>()?;
-
-            // let patstr = LitStr::new(
-            //     &("^$".to_string() + &patstr.value()),
-            //     Span::call_site(),
-            // );
+                input.parse::<Token!(=>)>()?;
+            let patstr = input.parse()?;
+                input.parse::<Token!(|)>()?;
+            let matcher_t = input.parse()?;
 
             if !input.is_empty() {
-                input.parse::<Token![,]>()?;
+                input.parse::<Token!(,)>()?;
             }
 
-            rules.push((name, patstr));
+            rules.push((name, patstr, matcher_t));
         }
 
         Ok(Self { rules })
@@ -46,11 +43,17 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
         parse_macro_input!(input as MakeCharMatcherRules);
 
     let mut token_stream = quote! {
-        use m6tokenizer::lazy_static::lazy_static;
-        use m6tokenizer::RegexCharMatcher;
+        use m6tokenizer::{
+            Token,
+            SrcLoc,
+            RegexCharMatcher,
+            SimpleCharMatcher,
+            CharMatcher,
+            lazy_static::lazy_static
+        };
     };
 
-    for (name, patstr) in rules {
+    for (name, patstr, matcher_t) in rules {
         let matcher_fn_name = Ident::new(
             &format!("{}_m", name.to_string().to_lowercase()),
             Span::call_site(),
@@ -59,19 +62,37 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
             &format!("{}_REG", name.to_string().to_uppercase()),
             Span::call_site(),
         );
-        token_stream.extend(quote! {
-            pub fn #matcher_fn_name(c: &char) -> bool {
-                lazy_static! {
-                    static ref #matcher_reg_name: RegexCharMatcher = RegexCharMatcher::new(#patstr);
-                }
 
-                #matcher_reg_name.is_match(c)
-            }
-        })
+        if matcher_t.to_string() == "r" {
+            token_stream.extend(quote! {
+                #[inline]
+                pub fn #matcher_fn_name(c: char) -> bool {
+                    lazy_static! {
+                        static ref #matcher_reg_name: Box<dyn CharMatcher + Send + Sync>
+                        = Box::new(RegexCharMatcher::new(#patstr));
+                    }
+
+                    #matcher_reg_name.is_match(c)
+                }
+            })
+        } else {
+            token_stream.extend(quote! {
+                #[inline]
+                pub fn #matcher_fn_name(c: char) -> bool {
+                    lazy_static! {
+                        static ref #matcher_reg_name: Box<dyn CharMatcher + Send + Sync>
+                        = Box::new(SimpleCharMatcher::new(#patstr));
+                    }
+
+                    #matcher_reg_name.is_match(c)
+                }
+            })
+        }
     }
 
     TokenStream::from(token_stream)
 }
+
 
 
 ////////////////////////////////////////////////////////////////////////////////
