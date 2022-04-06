@@ -1,7 +1,7 @@
 
 use std::path::PathBuf;
 
-use m6tokenizer::{
+use m6lexerkit::{
     make_token_matcher_rules,
     SrcFileInfo,
     aux_strlike_m,

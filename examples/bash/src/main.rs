@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use maplit::hashset;
 
-use m6tokenizer::{
+use m6lexerkit::{
     make_token_matcher_rules,
     SrcFileInfo,
     dqstr_m,

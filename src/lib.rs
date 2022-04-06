@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt, fs,
-    path::PathBuf,
+    path::PathBuf, cmp::min,
 };
 
 use fancy_regex::Regex as RegexEh;
@@ -11,7 +11,7 @@ pub use lazy_static;
 pub use concat_idents::concat_idents as concat_idents2;
 
 pub use proc_macros::{make_char_matcher_rules, make_token_matcher_rules};
-use regex::Regex;
+pub use regex::Regex;
 use string_interner::{symbol::DefaultSymbol, StringInterner};
 
 thread_local! {
@@ -320,8 +320,6 @@ pub fn tokenize(
             if let Some(tokres) = fn_matcher(&source[bytes_pos..], bytes_pos) {
                 match tokres {
                     Ok(tok) => {
-                        println!("{}", tok);
-
                         chars_pos += tok.span_chars_count(source);
                         bytes_pos += tok.span_len();
 
@@ -343,7 +341,6 @@ pub fn tokenize(
         }
 
         if !tok_matched {
-            // println!("{}", &source[bytes_pos..]);
             let loc = srcfile.offset2srcloc(chars_pos);
 
             return Err(TokenizeError {
@@ -591,13 +588,13 @@ pub type LexDFAMap = HashMap<Symbol, Vec<(FnCharMatcher, (Symbol, bool))>>;
 #[allow(unused)]
 pub const ENTRY_ST: &'static str = "Entry";
 
-pub struct LexDFA {
-    map: LexDFAMap,
+pub struct LexDFA<'a> {
+    map: &'a LexDFAMap,
     st: Symbol,
 }
 
-impl LexDFA {
-    pub fn new(map: LexDFAMap) -> Self {
+impl<'a> LexDFA<'a> {
+    pub fn new(map: &'a LexDFAMap) -> Self {
         Self {
             map,
             st: str2sym(ENTRY_ST),
@@ -615,25 +612,20 @@ impl LexDFA {
             }
         }
 
-        unreachable!("uncoverd char: {}", ch);
+        unreachable!("uncoverd char: <{}> on {{{}}}", ch, sym2str(self.st));
     }
 }
 
 #[macro_export]
 macro_rules! declare_st {
-    ($name:ident) => {
-        use $crate::lazy_static;
+    ( $($name:ident),* ) => {
         use $crate::concat_idents2;
 
-        concat_idents2!(state_name = $name, _ST {
-            const state_name: &'static str = stringify!($name);
-        });
-    };
-
-    ( $($name:ident),* ) => {
         $(
-            declare_st!{$name};
-        )+
+            concat_idents2!(state_name = $name, _ST {
+                const state_name: &'static str = stringify!($name);
+            });
+        )*
     };
 }
 
@@ -650,12 +642,11 @@ macro_rules! lexdfamap {
             use std::collections::HashMap;
             use $crate::FnCharMatcher;
             use $crate::concat_idents2;
+            use $crate::str2sym;
 
             let mut _map = HashMap::new();
 
             $(
-                use $crate::str2sym;
-
                 let mut trans_vec = Vec::new();
 
                 $(
@@ -665,7 +656,6 @@ macro_rules! lexdfamap {
                         concat_idents2!(matcher_name = $matcher, _m {
                             matcher_name as FnCharMatcher
                         }),
-                        // concat_idents!($matcher, _m) as FnCharMatcher,
                         (nxt_st, $flag)
                     ));
                 )*
@@ -680,21 +670,94 @@ macro_rules! lexdfamap {
     }
 }
 
+
+pub struct TokenRecognizer {
+    pub lookhead: usize,
+    pub pat_items: Vec<(Regex, Symbol)>
+}
+
+impl TokenRecognizer {
+    pub fn recognize(&self, source: &str, span: Span) -> Token {
+        let end = min(span.end, span.from + self.lookhead);
+
+        for (pat, name) in self.pat_items.iter() {
+            if pat.is_match(&source[..end]) {
+                return Token {
+                    name: *name,
+                    value: str2sym(&source[span.from..span.end]),
+                    span,
+                }
+            }
+        }
+
+        unreachable!("Unreconized Raw Token: {}", &source[span.from..span.end])
+    }
+}
+
+
+#[macro_export]
+macro_rules! token_recognizer {
+    ( $lookahead:literal | $($token_name:ident => $patstr:literal),* | ) => {
+        {
+            use $crate::Regex;
+            use $crate::str2sym;
+            use $crate::TokenRecognizer;
+
+            let mut pat_items = vec![];
+
+            $(
+                let mut patstr = $patstr.to_owned();
+
+                if patstr.starts_with("^") {
+                    patstr.insert(0, '^')
+                }
+
+                pat_items.push((
+                    Regex::new(&patstr).unwrap(),
+                    str2sym(stringify!($token_name))
+                ));
+            )*
+
+            TokenRecognizer {
+                lookhead: $lookahead,
+                pat_items
+            }
+        }
+    }
+}
+
+
+
 pub fn tokenize2(
     srcfile: &SrcFileInfo,
     dfamap: &LexDFAMap,
+    reconizer: &TokenRecognizer
 ) -> TokenizeResult {
-    todo!()
+
+    let mut tokens = vec![];
+
+    let mut dfa = LexDFA::new(dfamap);
+    let mut bytes_pos = 0;
+    let mut cache = String::new();
+
+    for c in srcfile.srcstr.chars() {
+        if dfa.forward(c) {  // REACH TOKEN END
+            // recognize token
+            let span = Span { from: bytes_pos, end: bytes_pos + cache.len() };
+            bytes_pos += span.len();
+
+            tokens.push(
+                reconizer.recognize(&srcfile.srcstr, span)
+            );
+
+            cache.clear();
+        }
+
+        cache.push(c);
+    }
+
+    Ok(tokens)
 }
-
-
-pub fn tokenize2_split(src: &SrcFileInfo, dfamap: &LexDFAMap) -> Vec<Symbol> {
-    let mut spaned = vec![];
-
-
-    spaned
-}
-
 
 
 

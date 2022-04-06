@@ -1,6 +1,7 @@
-use m6tokenizer::{
+use m6lexerkit::{
     make_token_matcher_rules,
     SrcFileInfo,
+    sqstr_m,
     dqstr_m,
     aqstr_m,
     lit_regex_m,
@@ -14,12 +15,12 @@ make_token_matcher_rules! {
     // Lit
     lit_int => r"[+|-]?(([0-9]+)|(0x[0-9a-f]+))",
     lit_float => r"[+|-]?([0-9]+\.[0-9])",
+    sqstr,
     dqstr,
     aqstr,
     lit_regex,
 
     // Comment
-    exec_id   => r"\$[[:alpha:]_][[:alnum:]_]*",
     slash_line_comment  => r"//.*",
 
     // space
@@ -81,7 +82,7 @@ pub fn tokenize(source: &SrcFileInfo) -> TokenizeResult {
 mod tests {
     use std::path::PathBuf;
 
-    use m6tokenizer::SrcFileInfo;
+    use m6lexerkit::SrcFileInfo;
 
     use crate::{trim_tokens, display_pure_tok, tokenize1};
 

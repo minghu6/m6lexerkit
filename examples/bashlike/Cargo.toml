@@ -6,4 +6,4 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-m6tokenizer = { path = "../../" }
+m6lexerkit = { path = "../../" }

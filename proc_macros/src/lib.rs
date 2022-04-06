@@ -43,7 +43,7 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
         parse_macro_input!(input as MakeCharMatcherRules);
 
     let mut token_stream = quote! {
-        use m6tokenizer::{
+        use m6lexerkit::{
             Token,
             SrcLoc,
             RegexCharMatcher,
@@ -135,7 +135,7 @@ pub fn make_token_matcher_rules(input: TokenStream) -> TokenStream {
         parse_macro_input!(input as TokenMatcherRules);
 
     let mut token_stream = quote! {
-        use m6tokenizer::{
+        use m6lexerkit::{
             Token,
             SrcLoc
         };
@@ -160,9 +160,9 @@ pub fn make_token_matcher_rules(input: TokenStream) -> TokenStream {
 
             token_stream.extend(quote! {
                 pub fn #matcher_fn_name(s: &str, from: usize) -> Option<TokenMatchResult> {
-                    m6tokenizer::lazy_static::lazy_static! {
-                        static ref #matcher_reg_name: m6tokenizer::TokenMatcher
-                            = m6tokenizer::TokenMatcher::new(#adjust_patstr, stringify!(#name));
+                    m6lexerkit::lazy_static::lazy_static! {
+                        static ref #matcher_reg_name: m6lexerkit::TokenMatcher
+                            = m6lexerkit::TokenMatcher::new(#adjust_patstr, stringify!(#name));
                     }
 
                     #matcher_reg_name.fetch_tok(s, from)
@@ -170,12 +170,12 @@ pub fn make_token_matcher_rules(input: TokenStream) -> TokenStream {
             });
         }
 
-        matchers_ts.extend(quote! { #matcher_fn_name as m6tokenizer::FnMatcher, });
+        matchers_ts.extend(quote! { #matcher_fn_name as m6lexerkit::FnMatcher, });
     }
 
     token_stream.extend(quote! {
-        m6tokenizer::lazy_static::lazy_static! {
-            pub static ref MATCHERS: Vec<m6tokenizer::FnMatcher> = vec![#matchers_ts];
+        m6lexerkit::lazy_static::lazy_static! {
+            pub static ref MATCHERS: Vec<m6lexerkit::FnMatcher> = vec![#matchers_ts];
         }
     });
 

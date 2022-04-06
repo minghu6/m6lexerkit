@@ -483,6 +483,7 @@ function toDynamicPathValidatorRegex(path, exactMatch) {
 
   function escapeStrRegex(str) {
     // borrowed from https://github.com/sindresorhus/escape-string-regexp/blob/master/index.js
-    return str.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
+    // return str.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&");
+    return str.replace(new RegExp('[|\\{}()[\]^$+*?.]', 'g'), "\\$&")
   }
 }
