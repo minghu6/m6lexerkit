@@ -1,5 +1,5 @@
 [package]
-name = "proc-macros"
+name = "m6lexerkit-proc-macros"
 version = "0.1.0"
 edition = "2021"
 

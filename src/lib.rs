@@ -1,15 +1,15 @@
 use std::{
     cell::RefCell,
+    cmp::min,
     collections::{HashMap, HashSet},
     error::Error,
     fmt, fs,
-    path::PathBuf, cmp::min,
+    path::{Path, PathBuf},
 };
 
+pub use concat_idents::concat_idents as concat_idents2;
 use fancy_regex::Regex as RegexEh;
 pub use lazy_static;
-pub use concat_idents::concat_idents as concat_idents2;
-
 pub use proc_macros::{make_char_matcher_rules, make_token_matcher_rules};
 pub use regex::Regex;
 use string_interner::{symbol::DefaultSymbol, StringInterner};
@@ -18,7 +18,16 @@ thread_local! {
     pub static INTERNER: RefCell<StringInterner> = RefCell::new(StringInterner::default());
 }
 
-pub type Symbol = DefaultSymbol;
+// pub type Symbol = DefaultSymbol;
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Symbol(DefaultSymbol);
+
+impl std::fmt::Debug for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", sym2str(*self))
+    }
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -34,19 +43,23 @@ pub struct SrcFileInfo {
     /// lines[x]: number of total chars until lines x [x]
     /// inspired by `proc_macro2`: `FileInfo`
     lines: Vec<usize>,
+    blines: Vec<usize>, // bytes offset
 
     srcstr: String,
 }
 
 impl SrcFileInfo {
-    pub fn new(path: PathBuf) -> Result<Self, Box<dyn Error>> {
+    pub fn new(path: &Path) -> Result<Self, Box<dyn Error>> {
         let srcstr = fs::read_to_string(&path)?;
+        let path = path.to_owned();
 
         let lines = Self::build_lines(&srcstr);
+        let blines = Self::build_blines(&srcstr);
 
         Ok(Self {
             path,
             lines,
+            blines,
             srcstr,
         })
     }
@@ -66,12 +79,27 @@ impl SrcFileInfo {
         lines
     }
 
+    fn build_blines(srcstr: &str) -> Vec<usize> {
+        let mut lines = vec![0];
+        let mut total = 0usize;
+
+        for c in srcstr.bytes() {
+            total += 1;
+
+            if c == b'\n' {
+                lines.push(total);
+            }
+        }
+
+        lines
+    }
+
     pub fn get_srcstr(&self) -> &str {
         &self.srcstr
     }
 
-    pub fn get_path(&self) -> &PathBuf {
-        &self.path
+    pub fn get_path(&self) -> &Path {
+        &self.path.as_path()
     }
 
     pub fn offset2srcloc(&self, offset: usize) -> SrcLoc {
@@ -86,6 +114,27 @@ impl SrcFileInfo {
                 SrcLoc {
                     ln: idx,
                     col: offset - self.lines[idx - 1] + 1, // 显然idx >= 0
+                }
+            }
+        }
+    }
+
+    /// bytes offset
+    pub fn boffset2srcloc(&self, offset: usize) -> SrcLoc {
+        match self.blines.binary_search(&offset) {
+            Ok(found) => {
+                SrcLoc {
+                    ln: found + 1,
+                    col: 1, // 换行处
+                }
+            }
+            Err(idx) => {
+                SrcLoc {
+                    ln: idx,
+                    col: self.srcstr[self.blines[idx - 1]..offset]
+                        .chars()
+                        .count()
+                        + 1, // 显然idx >= 0
                 }
             }
         }
@@ -176,11 +225,19 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn name_str(&self) -> String {
+    pub fn eof() -> Self {
+        Self {
+            name: str2sym("eof"),
+            value: str2sym(""),
+            span: Span { from: 0, end: 0 },
+        }
+    }
+
+    pub fn name_string(&self) -> String {
         sym2str(self.name)
     }
 
-    pub fn value_str(&self) -> String {
+    pub fn value_string(&self) -> String {
         sym2str(self.value)
     }
 
@@ -190,7 +247,7 @@ impl Token {
         INTERNER.with(|interner| {
             interner
                 .borrow()
-                .resolve(self.value)
+                .resolve(self.value.0)
                 .unwrap()
                 .chars()
                 .count()
@@ -215,19 +272,56 @@ impl Token {
             span: self.span,
         }
     }
+
+    pub fn rename_by_value(self, values: &[&str]) -> Self {
+        for value in values.into_iter() {
+            if self.check_value(*value) {
+                return self.rename(*value);
+            }
+        }
+        self
+    }
+
+    pub fn check_value(&self, value: &str) -> bool {
+        INTERNER.with(|internner| {
+            internner.borrow().resolve(self.value.0).unwrap() == value
+        })
+    }
+
+    pub fn check_name(&self, name: &str) -> bool {
+        INTERNER.with(|internner| {
+            internner.borrow().resolve(self.name.0).unwrap() == name
+        })
+    }
+
+    pub fn check_names_in(&self, targets: &[&str]) -> bool {
+        INTERNER.with(|internner| {
+            let internref = internner.borrow();
+            let name = internref.resolve(self.name.0).unwrap();
+
+            targets
+                .into_iter()
+                .find(|&&target| target == name)
+                .is_some()
+        })
+    }
 }
+
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "name: <{}>", self.name_str(),)?;
-        writeln!(f, "value: {}", self.value_str(),)?;
+        writeln!(f, "name: <{}>", self.name_string(),)?;
+        writeln!(f, "value: {}", self.value_string(),)?;
         writeln!(f, "len: {}", self.chars_len())
     }
 }
 
 impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+        f.debug_struct("Token")
+            .field("name", &self.name_string())
+            .field("value", &self.value_string())
+            .finish()
     }
 }
 
@@ -361,11 +455,11 @@ pub fn tokenize(
 
 pub fn sym2str(sym: Symbol) -> String {
     INTERNER
-        .with(|interner| interner.borrow().resolve(sym).unwrap().to_owned())
+        .with(|interner| interner.borrow().resolve(sym.0).unwrap().to_owned())
 }
 
 pub fn str2sym(s: &str) -> Symbol {
-    INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s))
+    Symbol(INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s)))
 }
 
 
@@ -468,11 +562,10 @@ pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
         match res {
             Ok(mut tok) => {
                 lazy_static::lazy_static! {
-                    // 'z'+1 = '}', 'Z' + 1 = '['
-                    pub static ref ALPHABET__: HashSet<char> = ('a'..'}').chain('A'..'[').collect();
+                    pub static ref ALPHABET__: HashSet<char> = ('a'..='z').chain('A'..='Z').collect();
                 }
 
-                let mut tokv = tok.value_str();
+                let mut tokv = tok.value_string();
                 if tokv.is_empty() {  // It' maybe slash comment
                     return None;
                 }
@@ -503,7 +596,6 @@ pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
 }
 
 
-///
 /// handle this heredoc:
 pub fn heredoc_m(
     source: &str,
@@ -673,7 +765,7 @@ macro_rules! lexdfamap {
 
 pub struct TokenRecognizer {
     pub lookhead: usize,
-    pub pat_items: Vec<(Regex, Symbol)>
+    pub pat_items: Vec<(Regex, Symbol)>,
 }
 
 impl TokenRecognizer {
@@ -686,7 +778,7 @@ impl TokenRecognizer {
                     name: *name,
                     value: str2sym(&source[span.from..span.end]),
                     span,
-                }
+                };
             }
         }
 
@@ -731,9 +823,8 @@ macro_rules! token_recognizer {
 pub fn tokenize2(
     srcfile: &SrcFileInfo,
     dfamap: &LexDFAMap,
-    reconizer: &TokenRecognizer
+    reconizer: &TokenRecognizer,
 ) -> TokenizeResult {
-
     let mut tokens = vec![];
 
     let mut dfa = LexDFA::new(dfamap);
@@ -741,14 +832,16 @@ pub fn tokenize2(
     let mut cache = String::new();
 
     for c in srcfile.srcstr.chars() {
-        if dfa.forward(c) {  // REACH TOKEN END
+        if dfa.forward(c) {
+            // REACH TOKEN END
             // recognize token
-            let span = Span { from: bytes_pos, end: bytes_pos + cache.len() };
+            let span = Span {
+                from: bytes_pos,
+                end: bytes_pos + cache.len(),
+            };
             bytes_pos += span.len();
 
-            tokens.push(
-                reconizer.recognize(&srcfile.srcstr, span)
-            );
+            tokens.push(reconizer.recognize(&srcfile.srcstr, span));
 
             cache.clear();
         }
@@ -764,17 +857,18 @@ pub fn tokenize2(
 #[cfg(test)]
 mod tests {
 
+    #[allow(warnings)]
     #[test]
     fn test_strmatch() {
         let s = "语言特定的函数(以下也称为routine, 名字用`__personality_routine`指代), 用于和**unwinding library** 配合做语言特定的异常处理";
 
-        let mut p = 0;
+        let p = 0;
         let end = s.len();
 
-        while p < end {
-            let new_s = &s[p..end];
-            println!("{}", new_s);
-            p += 3;
-        }
+        // while p < end {
+        //     let new_s = &s[p..end];
+        //     println!("{}", new_s);
+        //     p += 3;
+        // }
     }
 }

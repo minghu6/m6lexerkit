@@ -46,6 +46,7 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
         use m6lexerkit::{
             Token,
             SrcLoc,
+            Symbol,
             RegexCharMatcher,
             SimpleCharMatcher,
             CharMatcher,
@@ -58,6 +59,10 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
             &format!("{}_m", name.to_string().to_lowercase()),
             Span::call_site(),
         );
+        // let token_namesym_fn_name = Ident::new(
+        //     &format!("{}_n", name.to_string().to_lowercase()),
+        //     Span::call_site(),
+        // );
         let matcher_reg_name = Ident::new(
             &format!("{}_REG", name.to_string().to_uppercase()),
             Span::call_site(),
@@ -88,6 +93,12 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
                 }
             })
         }
+
+        // token_stream.extend(quote! {
+        //     pub const fn #token_namesym_fn_name() -> Symbol {
+        //         INTERNER.get_or_intern()
+        //     }
+        // });
     }
 
     TokenStream::from(token_stream)
