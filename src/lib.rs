@@ -69,7 +69,7 @@ impl Symbol {
 
 /// SrcFileInfo
 #[allow(dead_code)]
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct SrcFileInfo {
     /// Source file path
     path: PathBuf,
@@ -174,6 +174,25 @@ impl SrcFileInfo {
         }
     }
 
+    pub fn linestr(&self, span: Span) -> Option<&str> {
+        let SrcLoc {ln, col: _} = self.boffset2srcloc(span.from);
+
+        if ln - 1 >= self.blines.len() {
+            None
+        }
+        else {
+            let start = self.blines[ln-1];
+            let end;
+            if ln == self.blines.len() {
+               self.srcstr.get(start..)
+            }
+            else {
+                end = self.blines[ln];
+                self.srcstr.get(start..end)
+            }
+        }
+    }
+
     pub fn filename(&self) -> String {
         self.path.file_name().unwrap().to_string_lossy().to_string()
     }
@@ -255,6 +274,7 @@ impl Span {
 pub struct Token {
     pub name: Symbol,
     pub value: Symbol,
+    pub span: Span
 }
 
 impl Token {
@@ -262,6 +282,7 @@ impl Token {
         Self {
             name: str2sym0("eof"),
             value: str2sym0(""),
+            span: Span::default()
         }
     }
 
@@ -309,7 +330,8 @@ impl Token {
     pub fn rename(self, name: &str) -> Self {
         Self {
             name: str2sym(name, self.span()),
-            value: self.value
+            value: self.value,
+            span: self.span
         }
     }
 
@@ -391,13 +413,15 @@ impl TokenMatcher {
         self.pat.captures(text).and_then(|cap| {
             let bytes_len = cap.get(0).unwrap().as_str().len();
             let mat = cap.get(1).unwrap().as_str();
+            let span = Span {
+                from: start,
+                end: start + bytes_len,
+            };
 
             Some(Ok(Token {
                 name: self.tok_name,
-                value: str2sym(mat, Span {
-                    from: start,
-                    end: start + bytes_len,
-                }),
+                value: str2sym(mat, span),
+                span
             }))
         })
     }
@@ -579,7 +603,7 @@ pub fn aux_strlike_m(
     let value = str2sym(&val, span);
     let name = str2sym("__aux_tmp", span);
 
-    Some(Ok(Token { name, value }))
+    Some(Ok(Token { name, value, span }))
 }
 
 /// Double quote string
@@ -667,7 +691,7 @@ pub fn heredoc_m(
         let value = str2sym(cap.get(4).unwrap().as_str(), span);
         let name = str2sym("__aux_tmp", span);
 
-        Some(Ok(Token { name, value }))
+        Some(Ok(Token { name, value, span }))
     } else {
         None
     }
@@ -825,7 +849,8 @@ impl TokenRecognizer {
             if pat.is_match(&source[..end]) {
                 return Token {
                     name: *name,
-                    value: str2sym(&source[span.from..span.end], span)
+                    value: str2sym(&source[span.from..span.end], span),
+                    span
                 };
             }
         }
@@ -918,5 +943,10 @@ mod tests {
         //     println!("{}", new_s);
         //     p += 3;
         // }
+    }
+
+    #[test]
+    fn test_error_info() {
+        println!("aaaa\n^^^^^")
     }
 }
