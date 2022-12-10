@@ -174,8 +174,8 @@ impl SrcFileInfo {
         }
     }
 
-    pub fn linestr(&self, span: Span) -> Option<&str> {
-        let SrcLoc {ln, col: _} = self.boffset2srcloc(span.from);
+    pub fn linestr(&self, cur: usize) -> Option<&str> {
+        let SrcLoc {ln, col: _} = self.boffset2srcloc(cur);
 
         if ln - 1 >= self.blines.len() {
             None
@@ -368,6 +368,18 @@ impl Token {
         })
     }
 
+    pub fn check_values_in(&self, targets: &[&str]) -> bool {
+        INTERNER.with(|internner| {
+            let internref = internner.borrow();
+            let value = internref.resolve(self.value.0).unwrap();
+
+            targets
+                .into_iter()
+                .find(|&&target| target == value)
+                .is_some()
+        })
+    }
+
 }
 
 
@@ -439,17 +451,42 @@ pub enum TokenizeErrorReason {
 }
 
 
-#[allow(unused)]
-#[derive(Debug)]
 pub struct TokenizeError {
     reason: TokenizeErrorReason,
-    loc: SrcLoc,
-    path: PathBuf,
+    start: usize,
+    src: SrcFileInfo
 }
 impl std::error::Error for TokenizeError {}
 impl std::fmt::Display for TokenizeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#?}", self)
+        let linestr = self.src.linestr(self.start).unwrap();
+        let loc = self.src.offset2srcloc(self.start);
+        let rem_len = linestr.len() - loc.col;
+
+        writeln!(f)?;
+        writeln!(f)?;
+
+        writeln!(f, "{:?}:", self.reason)?;
+
+        writeln!(f)?;
+        writeln!(f, "{linestr}")?;
+        writeln!(f, "{}{}{}", " ".repeat(loc.col - 1), '^', "-".repeat(rem_len))?;
+        writeln!(
+            f,
+            "--> {}:{}:{}",
+            self.src.get_path().to_string_lossy(),
+            loc.ln,
+            loc.col
+        )?;
+        writeln!(f)?;
+
+
+        Ok(())
+    }
+}
+impl std::fmt::Debug for TokenizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
     }
 }
 
@@ -469,7 +506,7 @@ pub fn tokenize(
     }
 
     let mut bytes_pos = 0;
-    let mut chars_pos = 0;
+    let mut chars_pos = 0usize;
 
     while bytes_pos < source.len() {
         let mut tok_matched = false;
@@ -486,12 +523,10 @@ pub fn tokenize(
                         break;
                     }
                     Err(reason) => {
-                        let loc = srcfile.offset2srcloc(chars_pos);
-
                         return Err(TokenizeError {
                             reason,
-                            loc,
-                            path: srcfile.path.clone(),
+                            start: chars_pos,
+                            src: srcfile.clone()
                         });
                     }
                 }
@@ -499,12 +534,10 @@ pub fn tokenize(
         }
 
         if !tok_matched {
-            let loc = srcfile.offset2srcloc(chars_pos);
-
             return Err(TokenizeError {
                 reason: TokenizeErrorReason::UnrecognizedToken,
-                loc,
-                path: srcfile.path.clone(),
+                start: chars_pos,
+                src: srcfile.clone()
             });
         }
     }
