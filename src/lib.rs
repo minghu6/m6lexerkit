@@ -4,8 +4,8 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt, fs,
+    hash::Hash,
     path::{Path, PathBuf},
-    hash::Hash
 };
 
 pub use concat_idents::concat_idents as concat_idents2;
@@ -22,7 +22,7 @@ thread_local! {
 // pub type Symbol = DefaultSymbol;
 
 #[derive(Clone, Copy)]
-pub struct Symbol(pub DefaultSymbol, pub Span);
+pub struct Symbol(pub DefaultSymbol);
 
 impl std::fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,12 +56,6 @@ impl Ord for Symbol {
     }
 }
 
-
-impl Symbol {
-    pub fn derive(&self, s: &str) -> Self {
-        str2sym(s, self.1)
-    }
-}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -175,18 +169,16 @@ impl SrcFileInfo {
     }
 
     pub fn linestr(&self, cur: usize) -> Option<&str> {
-        let SrcLoc {ln, col: _} = self.boffset2srcloc(cur);
+        let SrcLoc { ln, col: _ } = self.boffset2srcloc(cur);
 
         if ln - 1 >= self.blines.len() {
             None
-        }
-        else {
-            let start = self.blines[ln-1];
+        } else {
+            let start = self.blines[ln - 1];
             let end;
             if ln == self.blines.len() {
-               self.srcstr.get(start..)
-            }
-            else {
+                self.srcstr.get(start..)
+            } else {
                 end = self.blines[ln];
                 self.srcstr.get(start..end)
             }
@@ -248,7 +240,9 @@ impl Ord for SrcLoc {
 }
 
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Default, Debug)]
+#[derive(
+    Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Default, Debug,
+)]
 pub struct Span {
     pub from: usize, // bytes offset used for index from origin file
     pub end: usize,
@@ -274,15 +268,15 @@ impl Span {
 pub struct Token {
     pub name: Symbol,
     pub value: Symbol,
-    pub span: Span
+    pub span: Span,
 }
 
 impl Token {
     pub fn eof() -> Self {
         Self {
-            name: str2sym0("eof"),
-            value: str2sym0(""),
-            span: Span::default()
+            name: str2sym("eof"),
+            value: str2sym(""),
+            span: Span::default(),
         }
     }
 
@@ -308,12 +302,7 @@ impl Token {
     }
 
     pub fn span(&self) -> Span {
-        self.value.1
-    }
-
-    pub fn assign_span(&mut self, span: Span) {
-        *&mut self.name.1 = span;
-        *&mut self.value.1 = span;
+        self.span
     }
 
     /// value's bytes len
@@ -329,9 +318,17 @@ impl Token {
 
     pub fn rename(self, name: &str) -> Self {
         Self {
-            name: str2sym(name, self.span()),
+            name: str2sym(name),
             value: self.value,
-            span: self.span
+            span: self.span,
+        }
+    }
+
+    pub fn mapval(self, val: &str) -> Self {
+        Self {
+            name: self.name,
+            value: str2sym(val),
+            span: self.span,
         }
     }
 
@@ -379,7 +376,6 @@ impl Token {
                 .is_some()
         })
     }
-
 }
 
 
@@ -413,7 +409,7 @@ impl TokenMatcher {
     pub fn new(patstr: &str, tok_name: &str) -> Self {
         Self {
             pat: Regex::new(patstr).unwrap(),
-            tok_name: str2sym0(tok_name),
+            tok_name: str2sym(tok_name),
         }
     }
 
@@ -432,8 +428,8 @@ impl TokenMatcher {
 
             Some(Ok(Token {
                 name: self.tok_name,
-                value: str2sym(mat, span),
-                span
+                value: str2sym(mat),
+                span,
             }))
         })
     }
@@ -454,7 +450,7 @@ pub enum TokenizeErrorReason {
 pub struct TokenizeError {
     reason: TokenizeErrorReason,
     start: usize,
-    src: SrcFileInfo
+    src: SrcFileInfo,
 }
 impl std::error::Error for TokenizeError {}
 impl std::fmt::Display for TokenizeError {
@@ -470,7 +466,13 @@ impl std::fmt::Display for TokenizeError {
 
         writeln!(f)?;
         writeln!(f, "{linestr}")?;
-        writeln!(f, "{}{}{}", " ".repeat(loc.col - 1), '^', "-".repeat(rem_len))?;
+        writeln!(
+            f,
+            "{}{}{}",
+            " ".repeat(loc.col - 1),
+            '^',
+            "-".repeat(rem_len)
+        )?;
         writeln!(
             f,
             "--> {}:{}:{}",
@@ -526,7 +528,7 @@ pub fn tokenize(
                         return Err(TokenizeError {
                             reason,
                             start: chars_pos,
-                            src: srcfile.clone()
+                            src: srcfile.clone(),
                         });
                     }
                 }
@@ -537,7 +539,7 @@ pub fn tokenize(
             return Err(TokenizeError {
                 reason: TokenizeErrorReason::UnrecognizedToken,
                 start: chars_pos,
-                src: srcfile.clone()
+                src: srcfile.clone(),
             });
         }
     }
@@ -555,16 +557,8 @@ pub fn sym2str(sym: Symbol) -> String {
         .with(|interner| interner.borrow().resolve(sym.0).unwrap().to_owned())
 }
 
-pub fn str2sym(s: &str, span: Span) -> Symbol {
-    Symbol(
-        INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s)),
-        span
-    )
-}
-
-/// With Span::default()
-pub fn str2sym0(s: &str) -> Symbol {
-    str2sym(s, Span::default())
+pub fn str2sym(s: &str) -> Symbol {
+    Symbol(INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s)))
 }
 
 
@@ -633,8 +627,8 @@ pub fn aux_strlike_m(
         from,
         end: from + span_len,
     };
-    let value = str2sym(&val, span);
-    let name = str2sym("__aux_tmp", span);
+    let value = str2sym(&val);
+    let name = str2sym("__aux_tmp");
 
     Some(Ok(Token { name, value, span }))
 }
@@ -687,11 +681,11 @@ pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
                             end: from + tok.span_len() + nxtc.to_string().len(),
                         };
 
-                        tok.assign_span(span);
+                        tok.span = span;
                     }
                 }
 
-                tok.value = str2sym(&tokv, tok.span());
+                tok.value = str2sym(&tokv);
 
                 Some(Ok(tok.rename("lit_regex")))
             },
@@ -721,8 +715,8 @@ pub fn heredoc_m(
             end: from + bytes_len,
         };
 
-        let value = str2sym(cap.get(4).unwrap().as_str(), span);
-        let name = str2sym("__aux_tmp", span);
+        let value = str2sym(cap.get(4).unwrap().as_str());
+        let name = str2sym("__aux_tmp");
 
         Some(Ok(Token { name, value, span }))
     } else {
@@ -795,7 +789,7 @@ impl<'a> LexDFA<'a> {
     pub fn new(map: &'a LexDFAMap) -> Self {
         Self {
             map,
-            st: str2sym0(ENTRY_ST),
+            st: str2sym(ENTRY_ST),
         }
     }
 
@@ -840,7 +834,7 @@ macro_rules! lexdfamap {
             use std::collections::HashMap;
             use $crate::FnCharMatcher;
             use $crate::concat_idents2;
-            use $crate::str2sym0;
+            use $crate::str2sym;
 
             let mut _map = HashMap::new();
 
@@ -848,7 +842,7 @@ macro_rules! lexdfamap {
                 let mut trans_vec = Vec::new();
 
                 $(
-                    let nxt_st = str2sym0($nxt_st);
+                    let nxt_st = str2sym($nxt_st);
 
                     trans_vec.push((
                         concat_idents2!(matcher_name = $matcher, _m {
@@ -858,7 +852,7 @@ macro_rules! lexdfamap {
                     ));
                 )*
 
-                let cur_st = str2sym0($cur_st);
+                let cur_st = str2sym($cur_st);
 
                 _map.insert(cur_st, trans_vec);
             )*
@@ -882,8 +876,8 @@ impl TokenRecognizer {
             if pat.is_match(&source[..end]) {
                 return Token {
                     name: *name,
-                    value: str2sym(&source[span.from..span.end], span),
-                    span
+                    value: str2sym(&source[span.from..span.end]),
+                    span,
                 };
             }
         }
@@ -898,7 +892,7 @@ macro_rules! token_recognizer {
     ( $lookahead:literal | $($token_name:ident => $patstr:literal),* | ) => {
         {
             use $crate::Regex;
-            use $crate::str2sym0;
+            use $crate::str2sym;
             use $crate::TokenRecognizer;
 
             let mut pat_items = vec![];
@@ -912,7 +906,7 @@ macro_rules! token_recognizer {
 
                 pat_items.push((
                     Regex::new(&patstr).unwrap(),
-                    str2sym0(stringify!($token_name))
+                    str2sym(stringify!($token_name))
                 ));
             )*
 
