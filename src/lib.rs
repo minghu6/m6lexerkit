@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     cmp::min,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     error::Error,
     fmt, fs,
     hash::Hash,
@@ -9,7 +9,6 @@ use std::{
 };
 
 pub use concat_idents::concat_idents as concat_idents2;
-use fancy_regex::Regex as RegexEh;
 pub use lazy_static;
 pub use proc_macros::{make_char_matcher_rules, make_token_matcher_rules};
 pub use regex::Regex;
@@ -77,9 +76,9 @@ pub struct SrcFileInfo {
 }
 
 impl SrcFileInfo {
-    pub fn new(path: &Path) -> Result<Self, Box<dyn Error>> {
+    pub fn new<P: AsRef<Path>>(path: &P) -> Result<Self, Box<dyn Error>> {
         let srcstr = fs::read_to_string(&path)?;
-        let path = path.to_owned();
+        let path = path.as_ref().to_owned();
 
         let lines = Self::build_lines(&srcstr);
         let blines = Self::build_blines(&srcstr);
@@ -90,6 +89,18 @@ impl SrcFileInfo {
             blines,
             srcstr,
         })
+    }
+
+    pub fn from_str(srcstr: String) -> Self {
+        let lines = Self::build_lines(&srcstr);
+        let blines = Self::build_blines(&srcstr);
+
+        Self {
+            path: PathBuf::new(),
+            lines,
+            blines,
+            srcstr,
+        }
     }
 
     fn build_lines(srcstr: &str) -> Vec<usize> {
@@ -444,6 +455,7 @@ pub enum TokenizeErrorReason {
     UnrecognizedToken,
     UnrecognizedEscaped(char),
     UnexpectedPostfix,
+    ZeroLenToken
 }
 
 
@@ -517,6 +529,14 @@ pub fn tokenize(
             if let Some(tokres) = fn_matcher(&source[bytes_pos..], bytes_pos) {
                 match tokres {
                     Ok(tok) => {
+                        if tok.span_len() == 0 {
+                            return Err(TokenizeError {
+                                reason: TokenizeErrorReason::ZeroLenToken,
+                                start: chars_pos,
+                                src: srcfile.clone(),
+                            })
+                        }
+
                         chars_pos += tok.span_chars_count(source);
                         bytes_pos += tok.span_len();
 
@@ -562,101 +582,133 @@ pub fn str2sym(s: &str) -> Symbol {
 }
 
 
-///
-/// handle this token type:
-///
-/// 1. contains anything but delimiter
-/// 1. delimiter can be escaped char
-///
-pub fn aux_strlike_m(
-    source: &str,
-    from: usize,
-    prefix: &str,
-    postfix: &str,
-    escape_char: char,
-) -> Option<Result<Token, TokenizeErrorReason>> {
-    debug_assert!(!prefix.is_empty());
-    debug_assert!(!postfix.is_empty());
 
-    if !source.starts_with(prefix) {
-        return None;
+pub mod prelude {
+    use std::collections::HashSet;
+
+    use fancy_regex::Regex as RegexEh;
+
+    use proc_macros::make_token_matcher_rules;
+
+    use crate::{str2sym, Span, TokenizeErrorReason, TokenMatchResult, TokenizeResult};
+
+
+    pub fn trim(res: TokenizeResult) -> TokenizeResult {
+        res.and_then(|toks| {Ok(
+            toks
+            .into_iter()
+            .filter(|tok| {
+                if tok.check_names_in(&[
+                    "newline",
+                    "sp",
+                    "sharp_line_comment",
+                    "slash_line_comment"
+                ])
+                {
+                    false
+                }
+                else {
+                    true
+                }})
+            .collect::<Vec<Token>>()
+        )})
     }
 
-    let mut postfix_iter = postfix.chars().into_iter();
-    let delimiter = postfix_iter.next().unwrap();
-    let mut val = String::new();
+    ///
+    /// handle this token type:
+    ///
+    /// 1. contains anything but delimiter
+    /// 1. delimiter can be escaped char
+    ///
+    pub fn aux_strlike_m(
+        source: &str,
+        from: usize,
+        prefix: &str,
+        postfix: &str,
+        escape_char: char,
+    ) -> Option<Result<Token, TokenizeErrorReason>> {
+        debug_assert!(!prefix.is_empty());
+        debug_assert!(!postfix.is_empty());
 
-    let mut st = 0;
-    // st:
-    //    0 normal mode
-    //    1 escape mode
-    //    2 tail mode  // collect tail
-
-    for c in source[prefix.len()..].chars() {
-        match st {
-            0 => {
-                if c == escape_char {
-                    st = 1;
-                } else if c == delimiter {
-                    st = 2;
-                }
-                val.push(c);
-            }
-            1 => {
-                st = 0;
-                val.push(c);
-            }
-            2 => {
-                if let Some(mat) = postfix_iter.next() {
-                    if c != mat {
-                        return Some(Err(
-                            TokenizeErrorReason::UnexpectedPostfix,
-                        ));
-                    }
-                } else {
-                    break;
-                }
-            }
-            _ => unreachable!(),
+        if !source.starts_with(prefix) {
+            return None;
         }
+
+        let mut postfix_iter = postfix.chars().into_iter();
+        let delimiter = postfix_iter.next().unwrap();
+        let mut val = String::new();
+
+        let mut st = 0;
+        // st:
+        //    0 normal mode
+        //    1 escape mode
+        //    2 tail mode  // collect tail
+
+        for c in source[prefix.len()..].chars() {
+            match st {
+                0 => {
+                    if c == escape_char {
+                        st = 1;
+                    } else if c == delimiter {
+                        st = 2;
+                    }
+                    val.push(c);
+                }
+                1 => {
+                    st = 0;
+                    val.push(c);
+                }
+                2 => {
+                    if let Some(mat) = postfix_iter.next() {
+                        if c != mat {
+                            return Some(Err(
+                                TokenizeErrorReason::UnexpectedPostfix,
+                            ));
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        val.pop().unwrap(); // pop delimiter
+
+        let span_len = prefix.len() + val.len() + postfix.len();
+        let span = Span {
+            from,
+            end: from + span_len,
+        };
+        let value = str2sym(&val);
+        let name = str2sym("__aux_tmp");
+
+        Some(Ok(Token { name, value, span }))
     }
-    val.pop().unwrap(); // pop delimiter
 
-    let span_len = prefix.len() + val.len() + postfix.len();
-    let span = Span {
-        from,
-        end: from + span_len,
-    };
-    let value = str2sym(&val);
-    let name = str2sym("__aux_tmp");
+    /// Double quote string
+    #[inline]
+    pub fn dqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
+        aux_strlike_m(source, from, "\"", "\"", '\\')
+            .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("dqstr")))))
+    }
 
-    Some(Ok(Token { name, value, span }))
-}
+    /// Double quote string
+    #[inline]
+    pub fn aqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
+        aux_strlike_m(source, from, "`", "`", '\\')
+            .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("aqstr")))))
+    }
 
-/// Double quote string
-#[inline]
-pub fn dqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
-    aux_strlike_m(source, from, "\"", "\"", '\\')
-        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("dqstr")))))
-}
+    /// Single quote string
+    #[inline]
+    pub fn sqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
+        aux_strlike_m(source, from, "'", "'", '\\')
+            .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("sqstr")))))
+    }
 
-/// Double quote string
-#[inline]
-pub fn aqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
-    aux_strlike_m(source, from, "`", "`", '\\')
-        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("aqstr")))))
-}
-
-/// Single quote string
-#[inline]
-pub fn sqstr_m(source: &str, from: usize) -> Option<TokenMatchResult> {
-    aux_strlike_m(source, from, "'", "'", '\\')
-        .and_then(|res| Some(res.and_then(|tok| Ok(tok.rename("sqstr")))))
-}
-
-#[inline]
-pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
-    aux_strlike_m(source, from, "/", "/", '\\')
+    #[inline]
+    pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
+        aux_strlike_m(source, from, "/", "/", '\\')
     .and_then(|res|
         match res {
             Ok(mut tok) => {
@@ -692,35 +744,87 @@ pub fn lit_regex_m(source: &str, from: usize) -> Option<TokenMatchResult> {
             _ => unreachable!(),
         }
     )
-}
-
-
-/// handle this heredoc:
-pub fn heredoc_m(
-    source: &str,
-    from: usize,
-) -> Option<Result<Token, TokenizeErrorReason>> {
-    lazy_static::lazy_static! {
-        pub static ref HEREDOC_2_REG_EH: RegexEh = RegexEh::new(
-            r#"^(<<<|<<-|<<|<-)[[:blank:]]*(.+)([[:blank:]]+.*\n|\n)([\s|\S]*?)\n\2"#
-        ).unwrap();
     }
 
-    let cap_opt = HEREDOC_2_REG_EH.captures(source).unwrap();
 
-    if let Some(cap) = cap_opt {
-        let bytes_len = cap.get(0).unwrap().as_str().len();
-        let span = Span {
-            from,
-            end: from + bytes_len,
-        };
+    /// handle this heredoc:
+    pub fn heredoc_m(
+        source: &str,
+        from: usize,
+    ) -> Option<Result<Token, TokenizeErrorReason>> {
+        lazy_static::lazy_static! {
+            pub static ref HEREDOC_2_REG_EH: RegexEh = RegexEh::new(
+                r#"^(<<<|<<-|<<|<-)[[:blank:]]*(.+)([[:blank:]]+.*\n|\n)([\s|\S]*?)\n\2"#
+            ).unwrap();
+        }
 
-        let value = str2sym(cap.get(4).unwrap().as_str());
-        let name = str2sym("__aux_tmp");
+        let cap_opt = HEREDOC_2_REG_EH.captures(source).unwrap();
 
-        Some(Ok(Token { name, value, span }))
-    } else {
-        None
+        if let Some(cap) = cap_opt {
+            let bytes_len = cap.get(0).unwrap().as_str().len();
+            let span = Span {
+                from,
+                end: from + bytes_len,
+            };
+
+            let value = str2sym(cap.get(4).unwrap().as_str());
+            let name = str2sym("__aux_tmp");
+
+            Some(Ok(Token { name, value, span }))
+        } else {
+            None
+        }
+    }
+
+    use crate as m6lexerkit;
+
+    make_token_matcher_rules! {
+        // Comment
+        sharp_line_comment  => r"#.*",
+
+        // White characters
+        sp      => "[[:blank:]]+",
+        newline => r#"\n\r?"#,
+
+        // Bracket
+        lparen => r"\(",
+        rparen => r"\)",
+        lbracket => r"\[",
+        rbracket => r"\]",
+        lbrace => r"\{",
+        rbrace => r"\}",
+
+        // Delimiter
+        colon => ":",
+        question => r"\?",
+        rarrow => "->",
+        rdarrow  => "=>",
+        semi   => ";",
+        comma  => ",",
+
+        // Assign
+        assign => "=",
+
+        // Unary Operation
+        inc => r"\+\+",
+        dec => r"--",
+        not => "!",
+
+        // Binary Operation
+        sub    => "-",
+        add    => r"\+[^\+]",
+        mul    => r"\*",
+        div    => "/",
+        dot    => r"\.",
+        ge     => ">=",
+        le     => "<=",
+        lt     => "<",
+        gt     => ">",
+        neq    => "!=",
+        eq     => "==",
+        percent=> "%",
+        and    => "&&",
+        or     => r"\|\|"
     }
 }
 
@@ -956,21 +1060,6 @@ pub fn tokenize2(
 
 #[cfg(test)]
 mod tests {
-
-    #[allow(warnings)]
-    #[test]
-    fn test_strmatch() {
-        let s = "语言特定的函数(以下也称为routine, 名字用`__personality_routine`指代), 用于和**unwinding library** 配合做语言特定的异常处理";
-
-        let p = 0;
-        let end = s.len();
-
-        // while p < end {
-        //     let new_s = &s[p..end];
-        //     println!("{}", new_s);
-        //     p += 3;
-        // }
-    }
 
     #[test]
     fn test_error_info() {
