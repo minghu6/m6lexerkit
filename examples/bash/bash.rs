@@ -5,8 +5,7 @@ use maplit::hashset;
 use m6lexerkit::{
     make_token_matcher_rules,
     SrcFileInfo,
-    dqstr_m,
-    heredoc_m,
+    prelude::*,
     tokenize, TokenMatchResult,
 };
 
@@ -52,7 +51,7 @@ fn trim_tokens(tokens: &[Token]) -> Vec<Token> {
 
     tokens
     .iter()
-    .filter(|tok| !blank_set.contains(&tok.name_str().as_str()))
+    .filter(|tok| !blank_set.contains(&tok.name_string().as_str()))
     .copied()
     .collect::<Vec<Token>>()
 }
@@ -60,16 +59,17 @@ fn trim_tokens(tokens: &[Token]) -> Vec<Token> {
 
 fn display_pure_tok(tokens: &[Token]) {
     for token in tokens.iter() {
-        println!("{}", token.value_str())
+        println!("{}", token.value_string())
     }
 }
 
 
 fn main() {
+    let resources_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     for i in 0..1 {
-        let path = PathBuf::from(format!("./examples/exp{}.sh", i));
-        let srcfile = SrcFileInfo::new(path).unwrap();
+        let path = resources_dir.join(format!("examples/bash/resources/exp{}.sh", i));
+        let srcfile = SrcFileInfo::new(&path).unwrap();
 
         // println!("{:#?}", sp_m(srcfile.get_srcstr(), SrcLoc { ln: 0, col: 0 }));
 

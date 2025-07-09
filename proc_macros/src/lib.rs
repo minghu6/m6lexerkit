@@ -59,10 +59,6 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
             &format!("{}_m", name.to_string().to_lowercase()),
             Span::call_site(),
         );
-        // let token_namesym_fn_name = Ident::new(
-        //     &format!("{}_n", name.to_string().to_lowercase()),
-        //     Span::call_site(),
-        // );
         let matcher_reg_name = Ident::new(
             &format!("{}_REG", name.to_string().to_uppercase()),
             Span::call_site(),
@@ -78,6 +74,8 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
                     }
 
                     #matcher_reg_name.is_match(c)
+                    // use m6lexerkit::Regex;
+                    // Regex::new(#patstr).unwrap().is_match(&c.to_string())
                 }
             })
         } else {
@@ -90,15 +88,10 @@ pub fn make_char_matcher_rules(input: TokenStream) -> TokenStream {
                     }
 
                     #matcher_reg_name.is_match(c)
+                    // #patstr.chars().nth(0).unwrap() == c
                 }
             })
         }
-
-        // token_stream.extend(quote! {
-        //     pub const fn #token_namesym_fn_name() -> Symbol {
-        //         INTERNER.get_or_intern()
-        //     }
-        // });
     }
 
     TokenStream::from(token_stream)

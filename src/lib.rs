@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     cmp::min,
     collections::HashMap,
     error::Error,
@@ -10,13 +9,16 @@ use std::{
 
 pub use concat_idents::concat_idents as concat_idents2;
 pub use lazy_static;
+use m6ptr::LazyStatic;
 pub use proc_macros::{make_char_matcher_rules, make_token_matcher_rules};
 pub use regex::Regex;
-use string_interner::{symbol::DefaultSymbol, StringInterner};
+use string_interner::{
+    backend::StringBackend, symbol::DefaultSymbol, StringInterner
+};
 
-thread_local! {
-    pub static INTERNER: RefCell<StringInterner> = RefCell::new(StringInterner::default());
-}
+
+pub static INTERNER: LazyStatic<StringInterner<StringBackend>> =
+    LazyStatic::new(|| StringInterner::default());
 
 // pub type Symbol = DefaultSymbol;
 
@@ -302,14 +304,13 @@ impl Token {
     /// value's chars len
     #[inline]
     pub fn chars_len(&self) -> usize {
-        INTERNER.with(|interner| {
-            interner
-                .borrow()
-                .resolve(self.value.0)
-                .unwrap()
-                .chars()
-                .count()
-        })
+        INTERNER
+            .read()
+            .unwrap()
+            .resolve(self.value.0)
+            .unwrap()
+            .chars()
+            .count()
     }
 
     pub fn span(&self) -> Span {
@@ -353,39 +354,31 @@ impl Token {
     }
 
     pub fn check_value(&self, value: &str) -> bool {
-        INTERNER.with(|internner| {
-            internner.borrow().resolve(self.value.0).unwrap() == value
-        })
+        INTERNER.read().unwrap().resolve(self.value.0).unwrap() == value
     }
 
     pub fn check_name(&self, name: &str) -> bool {
-        INTERNER.with(|internner| {
-            internner.borrow().resolve(self.name.0).unwrap() == name
-        })
+        INTERNER.read().unwrap().resolve(self.name.0).unwrap() == name
     }
 
     pub fn check_names_in(&self, targets: &[&str]) -> bool {
-        INTERNER.with(|internner| {
-            let internref = internner.borrow();
-            let name = internref.resolve(self.name.0).unwrap();
+        let internref = INTERNER.read().unwrap();
+        let name = internref.resolve(self.name.0).unwrap();
 
-            targets
-                .into_iter()
-                .find(|&&target| target == name)
-                .is_some()
-        })
+        targets
+            .into_iter()
+            .find(|&&target| target == name)
+            .is_some()
     }
 
     pub fn check_values_in(&self, targets: &[&str]) -> bool {
-        INTERNER.with(|internner| {
-            let internref = internner.borrow();
-            let value = internref.resolve(self.value.0).unwrap();
+        let internref = INTERNER.read().unwrap();
+        let value = internref.resolve(self.value.0).unwrap();
 
-            targets
-                .into_iter()
-                .find(|&&target| target == value)
-                .is_some()
-        })
+        targets
+            .into_iter()
+            .find(|&&target| target == value)
+            .is_some()
     }
 }
 
@@ -455,7 +448,7 @@ pub enum TokenizeErrorReason {
     UnrecognizedToken,
     UnrecognizedEscaped(char),
     UnexpectedPostfix,
-    ZeroLenToken
+    ZeroLenToken,
 }
 
 
@@ -534,7 +527,7 @@ pub fn tokenize(
                                 reason: TokenizeErrorReason::ZeroLenToken,
                                 start: chars_pos,
                                 src: srcfile.clone(),
-                            })
+                            });
                         }
 
                         chars_pos += tok.span_chars_count(source);
@@ -573,45 +566,45 @@ pub fn tokenize(
 //// Auxiliary
 
 pub fn sym2str(sym: Symbol) -> String {
-    INTERNER
-        .with(|interner| interner.borrow().resolve(sym.0).unwrap().to_owned())
+    INTERNER.read().unwrap().resolve(sym.0).unwrap().to_owned()
 }
 
 pub fn str2sym(s: &str) -> Symbol {
-    Symbol(INTERNER.with(|interner| interner.borrow_mut().get_or_intern(s)))
-}
+    let sym= INTERNER.write().unwrap().get_or_intern(s);
 
+    Symbol(sym)
+}
 
 
 pub mod prelude {
     use std::collections::HashSet;
 
     use fancy_regex::Regex as RegexEh;
-
     use proc_macros::make_token_matcher_rules;
 
-    use crate::{str2sym, Span, TokenizeErrorReason, TokenMatchResult, TokenizeResult};
+    use crate::{
+        Span, TokenMatchResult, TokenizeErrorReason, TokenizeResult, str2sym,
+    };
 
 
     pub fn trim(res: TokenizeResult) -> TokenizeResult {
-        res.and_then(|toks| {Ok(
-            toks
-            .into_iter()
-            .filter(|tok| {
-                if tok.check_names_in(&[
-                    "newline",
-                    "sp",
-                    "sharp_line_comment",
-                    "slash_line_comment"
-                ])
-                {
-                    false
-                }
-                else {
-                    true
-                }})
-            .collect::<Vec<Token>>()
-        )})
+        res.and_then(|toks| {
+            Ok(toks
+                .into_iter()
+                .filter(|tok| {
+                    if tok.check_names_in(&[
+                        "newline",
+                        "sp",
+                        "sharp_line_comment",
+                        "slash_line_comment",
+                    ]) {
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect::<Vec<Token>>())
+        })
     }
 
     ///
@@ -814,7 +807,7 @@ pub mod prelude {
         sub    => "-",
         add    => r"\+[^\+]",
         mul    => r"\*",
-        div    => "/",
+        div    => r"\\",
         dot    => r"\.",
         ge     => ">=",
         le     => "<=",
@@ -881,9 +874,9 @@ impl CharMatcher for RegexCharMatcher {
 pub type FnCharMatcher = fn(char) -> bool;
 pub type LexDFAMap = HashMap<Symbol, Vec<(FnCharMatcher, (Symbol, bool))>>;
 
-#[allow(unused)]
-pub const ENTRY_ST: &'static str = "Entry";
+pub const ENTRY_ST: &'static str = "entry-state";
 
+#[derive(Debug)]
 pub struct LexDFA<'a> {
     map: &'a LexDFAMap,
     st: Symbol,
@@ -901,14 +894,14 @@ impl<'a> LexDFA<'a> {
     pub fn forward(&mut self, ch: char) -> bool {
         let items = self.map.get(&self.st).unwrap();
 
-        for (matcher, (sym, res)) in items.into_iter() {
+        for (matcher, (sym, res)) in items.iter() {
             if matcher(ch) {
                 self.st = *sym;
                 return *res;
             }
         }
 
-        unreachable!("uncoverd char: <{}> on {{{}}}", ch, sym2str(self.st));
+        unreachable!("uncoverd char: `{}` on {{{}}}", ch, sym2str(self.st));
     }
 }
 
@@ -986,7 +979,10 @@ impl TokenRecognizer {
             }
         }
 
-        unreachable!("Unreconized Raw Token: {}", &source[span.from..span.end])
+        unreachable!(
+            "Unrecognized Raw Token: {}",
+            &source[span.from..span.end]
+        )
     }
 }
 
@@ -1021,7 +1017,6 @@ macro_rules! token_recognizer {
         }
     }
 }
-
 
 
 pub fn tokenize2(

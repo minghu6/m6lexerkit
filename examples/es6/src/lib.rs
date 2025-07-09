@@ -5,25 +5,22 @@ mod tokenizer2;
 
 use m6lexerkit::Token;
 use maplit::hashset;
-
 pub use tokenizer1::tokenize as tokenize1;
 pub use tokenizer2::tokenize as tokenize2;
 
-#[allow(unused)]
-pub(crate) fn trim_tokens(tokens: &[Token]) -> Vec<Token> {
+pub fn trim_tokens(tokens: &[Token]) -> Vec<Token> {
     let blank_set = hashset! { "newline", "sp", "slash_line_comment" };
 
     tokens
-    .iter()
-    .filter(|tok| !blank_set.contains(&tok.name_str().as_str()))
-    .copied()
-    .collect::<Vec<Token>>()
+        .iter()
+        .filter(|tok| !blank_set.contains(&tok.name_string().as_str()))
+        .copied()
+        .collect::<Vec<Token>>()
 }
 
-#[allow(unused)]
-pub(crate) fn display_pure_tok(tokens: &[Token]) {
+pub fn display_pure_tok(tokens: &[Token]) {
     for token in tokens.iter() {
-        println!("{}", token.value_str())
+        println!("{}", token.value_string())
     }
 }
 
@@ -42,8 +39,8 @@ mod tests {
 
     #[bench]
     fn bench_tokenizer1(b: &mut Bencher) {
-        let srcfile
-        = SrcFileInfo::new(PathBuf::from("./examples/app.js")).unwrap();
+        let srcfile =
+            SrcFileInfo::new(&PathBuf::from("./resources/app.js")).unwrap();
 
         b.iter(|| {
             let _tokens = tokenize1(&srcfile).unwrap();
@@ -53,7 +50,7 @@ mod tests {
     #[bench]
     fn bench_tokenizer2(b: &mut Bencher) {
         let srcfile
-        = SrcFileInfo::new(PathBuf::from("./examples/app.js")).unwrap();
+        = SrcFileInfo::new(&PathBuf::from("./resources/app.js")).unwrap();
 
         b.iter(|| {
             let _tokens = tokenize2(&srcfile).unwrap();

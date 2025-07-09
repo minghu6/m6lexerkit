@@ -1,11 +1,7 @@
 use m6lexerkit::{
-    make_token_matcher_rules,
-    SrcFileInfo,
-    sqstr_m,
-    dqstr_m,
-    aqstr_m,
-    lit_regex_m,
-    tokenize as tokenize_, TokenMatchResult, TokenizeResult,
+    SrcFileInfo, TokenMatchResult, TokenizeResult, make_token_matcher_rules,
+    prelude::{aqstr_m, dqstr_m, lit_regex_m, sqstr_m},
+    tokenize as tokenize_,
 };
 
 
@@ -84,22 +80,38 @@ mod tests {
 
     use m6lexerkit::SrcFileInfo;
 
-    use crate::{trim_tokens, display_pure_tok, tokenize1};
+    use crate::{display_pure_tok, tokenize1, trim_tokens};
 
 
     #[test]
     fn test_tokenize1() {
-        let path = PathBuf::from("./examples/exp0.js");
-        let srcfile = SrcFileInfo::new(path).unwrap();
+        use std::thread::spawn;
 
-        // println!("{:#?}", sp_m(srcfile.get_srcstr(), SrcLoc { ln: 0, col: 0 }));
+        let t1 = spawn(|| {
+            let path = PathBuf::from("./resources/exp0.js");
+            let srcfile = SrcFileInfo::new(&path).unwrap();
+
+            match tokenize1(&srcfile) {
+                Ok(tokens) => {
+                    let tokens = trim_tokens(&tokens[..]);
+                    display_pure_tok(&tokens[..]);
+                }
+                Err(err) => println!("{}", err),
+            }
+        });
+
+        let path = PathBuf::from("./resources/exp0.js");
+        let srcfile = SrcFileInfo::new(&path).unwrap();
 
         match tokenize1(&srcfile) {
             Ok(tokens) => {
                 let tokens = trim_tokens(&tokens[..]);
                 display_pure_tok(&tokens[..]);
-            },
+            }
             Err(err) => println!("{}", err),
         }
+
+        t1.join().unwrap();
+
     }
 }

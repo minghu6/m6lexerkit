@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use m6lexerkit::{
     make_token_matcher_rules,
     SrcFileInfo,
-    aux_strlike_m,
+    prelude::aux_strlike_m,
     tokenize, TokenMatchResult,
 };
 
@@ -57,10 +57,11 @@ fn cmd_m(source: &str, from: usize) -> Option<TokenMatchResult> {
 
 
 fn main() {
+    let resources_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     for i in 0..1 {
-        let path = PathBuf::from(format!("./examples/exp{}", i));
-        let srcfile = SrcFileInfo::new(path).unwrap();
+        let path = resources_dir.join(format!("examples/bashlike/resources/exp{}.bath", i));
+        let srcfile = SrcFileInfo::new(&path).unwrap();
 
         // println!("{:#?}", sp_m(srcfile.get_srcstr(), SrcLoc { ln: 0, col: 0 }));
 
@@ -69,5 +70,4 @@ fn main() {
             Err(err) => println!("{}", err),
         }
     }
-
 }

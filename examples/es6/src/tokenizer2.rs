@@ -1,6 +1,7 @@
 use m6lexerkit::{
     declare_st, lexdfamap, make_char_matcher_rules, token_recognizer,
-    tokenize2, LexDFAMap, SrcFileInfo, TokenizeResult, ENTRY_ST, TokenRecognizer,
+    tokenize2, LexDFAMap, SrcFileInfo, TokenRecognizer, TokenizeResult,
+    ENTRY_ST,
 };
 
 make_char_matcher_rules! {
@@ -76,6 +77,7 @@ declare_st! {
 
 lazy_static! {
     static ref LEX_DFA_MAP: LexDFAMap = lexdfamap! {
+        // Since there is no entry contains `ENTRY_ST` as next-state, we should create it manually.
         ENTRY_ST => {
             slash       | COMMENT_HEAD_ST,   false
             sp          | BLANK_ST,          false
@@ -324,9 +326,7 @@ lazy_static! {
     |];
 }
 
-
 /// NEED PreProcess for HereDoc and Regex Literal
-
 #[inline]
 pub fn tokenize(source: &SrcFileInfo) -> TokenizeResult {
     tokenize2(&source, &LEX_DFA_MAP, &RECOGNIZER)
@@ -335,7 +335,7 @@ pub fn tokenize(source: &SrcFileInfo) -> TokenizeResult {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf};
 
     use m6lexerkit::SrcFileInfo;
 
@@ -344,15 +344,38 @@ mod tests {
 
     #[test]
     fn test_tokenize2() {
-        let path = PathBuf::from("./examples/exp0.js");
-        let srcfile = SrcFileInfo::new(path).unwrap();
+        use std::thread::spawn;
+
+        let t1 = spawn(|| {
+            let srcfile =
+                SrcFileInfo::new(&PathBuf::from("./resources/exp0.js"))
+                    .unwrap();
+
+            let _tokens = tokenize(&srcfile).unwrap();
+
+            // Mock PreProcess
+            for c in srcfile.get_srcstr().chars() {
+                let _ = c.to_owned();
+            }
+
+            for c in srcfile.get_srcstr().chars() {
+                let _ = c.to_owned();
+            }
+        });
+
+        // t1.join().unwrap();
+
+        let path = PathBuf::from("./resources/exp0.js");
+        let srcfile = SrcFileInfo::new(&path).unwrap();
 
         match tokenize(&srcfile) {
             Ok(tokens) => {
-                let tokens = trim_tokens(&tokens[..]);
+                let _tokens = trim_tokens(&tokens[..]);
                 display_pure_tok(&tokens[..]);
-            },
+            }
             Err(err) => println!("{}", err),
         }
+
+        t1.join().unwrap();
     }
 }
